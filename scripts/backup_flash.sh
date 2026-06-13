@@ -3,6 +3,7 @@ set -euo pipefail
 
 PORT="${PORT:-/dev/cu.usbmodem1101}"
 BACKUP_DIR="${BACKUP_DIR:-backups}"
+BOARD_BACKUP_PREFIX="${BOARD_BACKUP_PREFIX:-lilygo-t-display-s3-amoled-plus}"
 FLASH_SIZE_BYTES="${FLASH_SIZE_BYTES:-16777216}"
 CHUNK_SIZE_BYTES="${CHUNK_SIZE_BYTES:-1048576}"
 RETRIES="${RETRIES:-3}"
@@ -82,9 +83,9 @@ main() {
 
     mkdir -p "${BACKUP_DIR}"
     timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-    chunk_dir="${BACKUP_DIR}/lilygo-t-display-s3-${timestamp}-chunks"
-    full_file="${BACKUP_DIR}/lilygo-t-display-s3-${timestamp}-full-flash-16mb.bin"
-    manifest_file="${BACKUP_DIR}/lilygo-t-display-s3-${timestamp}-full-flash-16mb.txt"
+    chunk_dir="${BACKUP_DIR}/${BOARD_BACKUP_PREFIX}-${timestamp}-chunks"
+    full_file="${BACKUP_DIR}/${BOARD_BACKUP_PREFIX}-${timestamp}-full-flash-16mb.bin"
+    manifest_file="${BACKUP_DIR}/${BOARD_BACKUP_PREFIX}-${timestamp}-full-flash-16mb.txt"
     mkdir -p "${chunk_dir}"
 
     {

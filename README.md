@@ -1,6 +1,6 @@
 # wifi-proxy
 
-Firmware for a LilyGo T-Display-S3 ESP32-S3 that acts as a small home guest
+Firmware for a LilyGo T-Display S3 AMOLED Plus that acts as a small home guest
 Wi-Fi gateway. The device joins your existing 2.4 GHz home Wi-Fi as a client,
 publishes a separate guest SSID, and uses a captive portal to grant timed guest
 access through the LilyGo.
@@ -33,6 +33,11 @@ backups/lilygo-t-display-s3-20260613T185051Z-full-flash-16mb.bin
 SHA256: 565f24e2b681dd54455ab2550e5f0ef59567e33224be79c165b974a9d90d7ac6
 ```
 
+That first backup filename uses the earlier working board label from before the
+exact AMOLED Plus SKU was identified. New backups created by
+`scripts/backup_flash.sh` use the `lilygo-t-display-s3-amoled-plus` prefix by
+default.
+
 Flash backups are written under `backups/`, which is intentionally ignored by
 git because firmware images can contain local credentials or device-specific
 state.
@@ -47,8 +52,8 @@ The firmware has two modes.
 
 ### Owner Setup Mode
 
-Setup mode starts when no upstream SSID is configured, when GPIO14 is held while
-booting, or after a long press on GPIO14 in guest mode.
+Setup mode starts when no upstream SSID is configured or after a long press on
+BOOT in guest mode.
 
 Owner setup mode is separate from guest mode. It publishes only the setup AP,
 not the configured guest AP, and serves the home Wi-Fi configuration page from
@@ -96,15 +101,16 @@ timer expires or access is stopped.
 
 ## LilyGo UI
 
-The T-Display-S3 screen shows the current mode, guest AP, client count, upstream
-state, gateway state, and remaining access time.
+The AMOLED Plus touchscreen shows the current mode, guest AP, client count,
+upstream state, gateway state, remaining access time, and battery/USB status.
 
 Controls:
 
-- `BOOT` cycles display pages.
-- GPIO14 short press starts or stops guest access in guest mode.
-- GPIO14 long press restarts into setup mode.
-- Holding GPIO14 during boot starts setup mode.
+- Physical `BOOT` short press cycles display pages.
+- Physical `BOOT` long press in guest mode restarts into owner setup mode.
+- Touch `PAGE` cycles display pages.
+- Touch `START` or `STOP` starts or stops guest access in guest mode.
+- Touch `REBOOT` restarts the board from setup mode.
 
 ## Optional Compile-Time Defaults
 
@@ -167,16 +173,32 @@ code /Users/sclarke/github/wifi-proxy
 
 ## Board Notes
 
-This project uses the PlatformIO board ID `lilygo-t-display-s3`. The starter
-firmware initializes the onboard ST7789 display and enables the LilyGo power
-path needed for battery-powered display operation.
+This project targets the LilyGo T-Display S3 AMOLED Plus 1.91-inch board. The
+PlatformIO environment is `t-display-s3-amoled-plus` and uses the local board
+definition `T-Display-AMOLED` from LilyGo's AMOLED Series repository.
 
-The T-Display-S3 charging circuit is hardware-managed when USB-C power and a
-compatible single-cell LiPo battery are connected. LilyGo's board notes also
-call out GPIO15: in battery power mode, GPIO15 must be driven HIGH to enable the
-V3V/display power path. This firmware sets GPIO15 HIGH as the first board
-initialization step in `setup()` and does not repurpose or drive GPIO15 LOW.
+Official references:
 
-The firmware does not adjust charge current or implement battery protection in
-software. Use a battery that is compatible with the board's onboard charging
-circuit, correct connector, and polarity.
+- Product page: <https://lilygo.cc/products/t-display-s3-amoled-plus>
+- Source library and examples: <https://github.com/Xinyuan-LilyGO/LilyGo-AMOLED-Series>
+
+The original firmware backup identifies as LilyGo's AMOLED Factory firmware
+family. Its strings reference `LilyGo_AMOLED.cpp`, `LilyGo AMOLED`, and the
+1.91-inch SPI AMOLED board path. The closest public source found is the
+`examples/Factory/Factory.ino` sketch in the official `LilyGo-AMOLED-Series`
+repository. The exact backed-up binary hash was not matched to a published
+release, so the 16 MB flash backup remains the restore source of record.
+
+The display path uses `LilyGo-AMOLED-Series`, `beginAMOLED_191_SPI()`, and LVGL
+8. The board has a 1.91-inch RM67162 AMOLED panel, capacitive touch, 16 MB
+flash, and 8 MB OPI PSRAM.
+
+Charging is software-visible on this AMOLED Plus variant. LilyGo's library maps
+`LILYGO_AMOLED_191_SPI` to a BQ25896 charger interface. This firmware calls
+`configureAmoledPlusCharging()` after display/board init to enable measurement
+and charging. Do not remove that call unless you have separately verified that
+the connected battery still charges under the replacement firmware.
+
+GPIO14 is SD-card SCK on this board and is not used as a button. The only
+physical button used by this firmware is BOOT/GPIO0. Use a battery that is
+compatible with the board's onboard charging circuit, connector, and polarity.

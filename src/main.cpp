@@ -1,9 +1,11 @@
 #include <Arduino.h>
 #include <DNSServer.h>
+#include <LV_Helper.h>
+#include <LilyGo_AMOLED.h>
 #include <Preferences.h>
-#include <TFT_eSPI.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <lvgl.h>
 
 #if __has_include("network_config.h")
 #include "network_config.h"
@@ -47,14 +49,20 @@ constexpr uint32_t kWifiReconnectMs = 10000;
 constexpr uint32_t kDebounceMs = 35;
 constexpr uint32_t kLongPressMs = 1600;
 constexpr uint32_t kDefaultSessionMinutes = 120;
-constexpr uint8_t kBoardPowerEnablePin = 15;
 constexpr uint8_t kButtonPagePin = 0;
-constexpr uint8_t kButtonActionPin = 14;
 const IPAddress kPortalIp(192, 168, 42, 1);
 const IPAddress kPortalGateway(192, 168, 42, 1);
 const IPAddress kPortalSubnet(255, 255, 255, 0);
 const char kSetupApSsid[] = "wifi-proxy-setup";
 const char kSetupApPassword[] = "setup12345";
+constexpr uint32_t kUiBackgroundColor = 0x080908;
+constexpr uint32_t kUiPanelColor = 0x181a18;
+constexpr uint32_t kUiTextColor = 0xf5f5f2;
+constexpr uint32_t kUiGreenColor = 0x56d98d;
+constexpr uint32_t kUiCyanColor = 0x52c7e8;
+constexpr uint32_t kUiOrangeColor = 0xffcf5c;
+constexpr uint32_t kUiRedColor = 0xff6b6b;
+constexpr size_t kUiLineCount = 5;
 
 struct GatewaySettings {
     String upstreamSsid;
@@ -73,22 +81,33 @@ struct ButtonState {
     uint32_t pressedAtMs = 0;
 };
 
-TFT_eSPI display;
+LilyGo_Class amoled;
 DNSServer dnsServer;
 WebServer webServer(kHttpPort);
 Preferences preferences;
 GatewaySettings settings;
 ButtonState pageButton;
-ButtonState actionButton;
 
 uint32_t lastDisplayRefreshMs = 0;
 uint32_t lastWifiReconnectMs = 0;
 uint32_t guestAccessEndsAtMs = 0;
 uint8_t screenPage = 0;
 bool setupMode = false;
+bool displayReady = false;
 bool naptEnabled = false;
 bool guestAccessActive = false;
 String portalMessage;
+lv_obj_t* headerBar = nullptr;
+lv_obj_t* titleLabel = nullptr;
+lv_obj_t* lineLabels[kUiLineCount] = {};
+lv_obj_t* footerBar = nullptr;
+lv_obj_t* pageButtonWidget = nullptr;
+lv_obj_t* actionButtonWidget = nullptr;
+lv_obj_t* actionButtonLabel = nullptr;
+
+void drawStatus();
+void handlePageButtonShortPress();
+void handleActionButtonShortPress();
 
 String valueOrDefault(const String& value, const char* fallback) {
     return value.length() > 0 ? value : String(fallback);
@@ -260,11 +279,17 @@ bool readAndClearSetupNextFlag() {
     return setupNext;
 }
 
-void configureBoardPowerPath() {
-    // LilyGo T-Display-S3 uses GPIO15 to keep the V3V/display power path enabled
-    // in battery mode. Keep this first in setup and never repurpose GPIO15.
-    pinMode(kBoardPowerEnablePin, OUTPUT);
-    digitalWrite(kBoardPowerEnablePin, HIGH);
+void configureAmoledPlusCharging() {
+    if (amoled.getBoardID() != LILYGO_AMOLED_191_SPI) {
+        return;
+    }
+
+    // Keep the BQ25896 charge path on after replacing the factory firmware.
+    amoled.BQ.enableMeasure();
+    amoled.BQ.setChargeTargetVoltage(4208);
+    amoled.BQ.setPrechargeCurr(64);
+    amoled.BQ.setChargerConstantCurr(832);
+    amoled.BQ.enableCharge();
 }
 
 void setGatewayOpen(bool open) {
@@ -440,8 +465,8 @@ String setupHtml() {
     body += settings.sessionMinutes;
     body += F("\"><p><button type=\"submit\">Save settings</button></p></form></section>");
     body += F("<section class=\"panel\"><h2>Device controls</h2>"
-              "<p>After saving, reboot normally to start the guest gateway. Hold the right-hand "
-              "button while booting to return to setup mode.</p>"
+              "<p>After saving, reboot normally to start the guest gateway. Long-press BOOT "
+              "in guest mode to return to setup mode.</p>"
               "<form method=\"post\" action=\"/admin/reboot\"><button class=\"secondary\" "
               "type=\"submit\">Reboot now</button></form></section>");
     return pageShell(F("Gateway setup"), body);
@@ -513,8 +538,8 @@ void sendOwnerOnly() {
               "from the guest network.</p>"
               "<p>Restart the LilyGo into setup mode to change the upstream home Wi-Fi "
               "connection or guest settings.</p>"
-              "<p class=\"small\">Hold GPIO14 while booting, or long-press GPIO14 in "
-              "guest mode. The setup network and URL are shown on the LilyGo display.</p>"
+              "<p class=\"small\">Long-press BOOT in guest mode to restart into setup. "
+              "The setup network and URL are shown on the LilyGo display.</p>"
               "</section>");
     webServer.sendHeader(F("Cache-Control"), F("no-store"));
     webServer.send(403, F("text/html"), pageShell(F("Owner setup locked"), body));
@@ -633,99 +658,195 @@ void configureWebServer() {
     webServer.begin();
 }
 
+void setTextColor(lv_obj_t* obj, uint32_t color) {
+    lv_obj_set_style_text_color(obj, lv_color_hex(color), LV_PART_MAIN);
+}
+
+void stylePanel(lv_obj_t* obj, uint32_t color) {
+    lv_obj_set_style_bg_color(obj, lv_color_hex(color), LV_PART_MAIN);
+    lv_obj_set_style_border_width(obj, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(obj, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+}
+
+lv_obj_t* makeFooterButton(lv_obj_t* parent, const char* text, lv_align_t align) {
+    lv_obj_t* button = lv_btn_create(parent);
+    lv_obj_set_size(button, 112, 34);
+    lv_obj_align(button, align, 8, 0);
+    lv_obj_set_style_radius(button, 5, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(button, lv_color_hex(0x2f80ed), LV_PART_MAIN);
+
+    lv_obj_t* label = lv_label_create(button);
+    lv_label_set_text(label, text);
+    lv_obj_center(label);
+    return button;
+}
+
+void onPageButtonClicked(lv_event_t* event) {
+    if (lv_event_get_code(event) == LV_EVENT_CLICKED) {
+        handlePageButtonShortPress();
+    }
+}
+
+void onActionButtonClicked(lv_event_t* event) {
+    if (lv_event_get_code(event) == LV_EVENT_CLICKED) {
+        handleActionButtonShortPress();
+    }
+}
+
+void createDisplayUi() {
+    lv_obj_t* screen = lv_scr_act();
+    stylePanel(screen, kUiBackgroundColor);
+    lv_obj_set_style_pad_all(screen, 0, LV_PART_MAIN);
+
+    const lv_coord_t width = lv_disp_get_hor_res(nullptr);
+    headerBar = lv_obj_create(screen);
+    stylePanel(headerBar, kUiCyanColor);
+    lv_obj_set_size(headerBar, width, 34);
+    lv_obj_align(headerBar, LV_ALIGN_TOP_MID, 0, 0);
+
+    titleLabel = lv_label_create(headerBar);
+    lv_obj_set_width(titleLabel, width - 24);
+    lv_label_set_long_mode(titleLabel, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_font(titleLabel, &lv_font_montserrat_18, LV_PART_MAIN);
+    setTextColor(titleLabel, 0x101010);
+    lv_obj_align(titleLabel, LV_ALIGN_LEFT_MID, 12, 0);
+
+    for (size_t i = 0; i < kUiLineCount; ++i) {
+        lineLabels[i] = lv_label_create(screen);
+        lv_obj_set_width(lineLabels[i], width - 24);
+        lv_label_set_long_mode(lineLabels[i], LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_font(lineLabels[i], &lv_font_montserrat_16, LV_PART_MAIN);
+        setTextColor(lineLabels[i], kUiTextColor);
+        lv_obj_align(lineLabels[i], LV_ALIGN_TOP_LEFT, 12, 46 + static_cast<int>(i) * 27);
+    }
+
+    footerBar = lv_obj_create(screen);
+    stylePanel(footerBar, kUiPanelColor);
+    lv_obj_set_size(footerBar, width, 44);
+    lv_obj_align(footerBar, LV_ALIGN_BOTTOM_MID, 0, 0);
+
+    pageButtonWidget = makeFooterButton(footerBar, "PAGE", LV_ALIGN_LEFT_MID);
+    lv_obj_add_event_cb(pageButtonWidget, onPageButtonClicked, LV_EVENT_CLICKED, nullptr);
+
+    actionButtonWidget = makeFooterButton(footerBar, "START", LV_ALIGN_RIGHT_MID);
+    lv_obj_add_event_cb(actionButtonWidget, onActionButtonClicked, LV_EVENT_CLICKED, nullptr);
+    actionButtonLabel = lv_obj_get_child(actionButtonWidget, 0);
+}
+
 void configureDisplay() {
-    pinMode(TFT_BL, OUTPUT);
-    digitalWrite(TFT_BL, TFT_BACKLIGHT_ON);
+    const bool boardReady = amoled.beginAMOLED_191_SPI();
+    if (!boardReady) {
+        Serial.println(F("AMOLED Plus init failed; display UI disabled"));
+        return;
+    }
 
-    display.init();
-    display.setRotation(1);
-    display.fillScreen(TFT_BLACK);
-    display.setTextDatum(TL_DATUM);
+    configureAmoledPlusCharging();
+    amoled.setBrightness(180);
+    beginLvglHelper(amoled);
+    createDisplayUi();
+    displayReady = true;
 }
 
-void drawFooter() {
-    display.fillRect(0, 151, 320, 19, TFT_DARKGREY);
-    display.setTextFont(1);
-    display.setTextColor(TFT_WHITE, TFT_DARKGREY);
-    display.drawString(F("BOOT: page"), 8, 157);
-    display.drawString(setupMode ? F("IO14: reboot") : F("IO14: start/end"),
-                       204,
-                       157);
+String batteryText() {
+    if (!displayReady || amoled.getBoardID() != LILYGO_AMOLED_191_SPI) {
+        return F("Battery: unavailable");
+    }
+
+    String text = String(F("Battery: ")) + amoled.BQ.getBattVoltage() + F(" mV");
+    if (amoled.BQ.isCharging()) {
+        text += F(" charging");
+    } else if (amoled.BQ.isVbusIn()) {
+        text += F(" USB in");
+    }
+    return text;
 }
 
-void drawHeader(const String& title, uint16_t color) {
-    display.fillScreen(TFT_BLACK);
-    display.fillRect(0, 0, 320, 28, color);
-    display.setTextColor(TFT_BLACK, color);
-    display.setTextFont(2);
-    display.drawString(title, 10, 7);
+void setUiContent(const String& title,
+                  uint32_t headerColor,
+                  const String lines[kUiLineCount],
+                  const char* actionText,
+                  uint32_t actionColor) {
+    if (!displayReady) {
+        return;
+    }
+
+    lv_obj_set_style_bg_color(headerBar, lv_color_hex(headerColor), LV_PART_MAIN);
+    lv_label_set_text(titleLabel, title.c_str());
+
+    for (size_t i = 0; i < kUiLineCount; ++i) {
+        lv_label_set_text(lineLabels[i], lines[i].c_str());
+        setTextColor(lineLabels[i], i == 3 ? kUiOrangeColor : kUiTextColor);
+    }
+
+    lv_label_set_text(actionButtonLabel, actionText);
+    lv_obj_set_style_bg_color(actionButtonWidget, lv_color_hex(actionColor), LV_PART_MAIN);
 }
 
 void drawDashboard() {
     const bool open = guestAccessActive && naptEnabled;
-    drawHeader(F("Guest gateway"), setupMode ? TFT_ORANGE : (open ? TFT_GREEN : TFT_CYAN));
-    display.setTextFont(2);
-    display.setTextColor(TFT_WHITE, TFT_BLACK);
-    display.drawString(String(F("Mode: ")) + (setupMode ? F("SETUP") : F("GUEST")), 10, 38);
-    display.drawString(String(F("AP: ")) + (setupMode ? String(kSetupApSsid)
-                                                       : settings.guestApSsid),
-                       10,
-                       58);
-    display.drawString(String(F("Clients: ")) + WiFi.softAPgetStationNum(), 10, 78);
-    display.setTextColor(open ? TFT_GREEN : TFT_YELLOW, TFT_BLACK);
-    display.drawString(String(F("Access: ")) +
-                           (guestAccessActive ? formatDuration(remainingAccessSeconds())
-                                              : F("closed")),
-                       10,
-                       100);
-    display.setTextColor(upstreamConnected() ? TFT_GREEN : TFT_YELLOW, TFT_BLACK);
-    display.drawString(upstreamConnected() ? F("Home Wi-Fi: connected")
-                                           : F("Home Wi-Fi: offline"),
-                       10,
-                       122);
-    drawFooter();
+    const String lines[kUiLineCount] = {
+        String(F("Mode: ")) + (setupMode ? F("SETUP") : F("GUEST")),
+        String(F("AP: ")) + (setupMode ? String(kSetupApSsid) : settings.guestApSsid),
+        String(F("Clients: ")) + WiFi.softAPgetStationNum(),
+        String(F("Access: ")) +
+            (guestAccessActive ? formatDuration(remainingAccessSeconds()) : F("closed")),
+        batteryText(),
+    };
+    setUiContent(F("Guest gateway"),
+                 setupMode ? kUiOrangeColor : (open ? kUiGreenColor : kUiCyanColor),
+                 lines,
+                 setupMode ? "REBOOT" : (guestAccessActive ? "STOP" : "START"),
+                 setupMode ? kUiOrangeColor : (guestAccessActive ? kUiRedColor : kUiGreenColor));
 }
 
 void drawUpstream() {
-    drawHeader(F("Home Wi-Fi"), upstreamConnected() ? TFT_GREEN : TFT_ORANGE);
-    display.setTextFont(2);
-    display.setTextColor(TFT_WHITE, TFT_BLACK);
-    display.drawString(String(F("SSID: ")) +
-                           (settings.upstreamSsid.length() > 0 ? settings.upstreamSsid
-                                                               : F("not set")),
-                       10,
-                       42);
-    display.drawString(String(F("IP: ")) + upstreamIpText(), 10, 66);
     const String rssiText = upstreamConnected() ? String(WiFi.RSSI()) + F(" dBm") : String(F("-"));
-    display.drawString(String(F("RSSI: ")) + rssiText, 10, 90);
-    display.setTextColor(TFT_CYAN, TFT_BLACK);
-    display.drawString(F("Hold IO14 at boot for setup"), 10, 120);
-    drawFooter();
+    const String lines[kUiLineCount] = {
+        String(F("SSID: ")) +
+            (settings.upstreamSsid.length() > 0 ? settings.upstreamSsid : String(F("not set"))),
+        String(F("IP: ")) + upstreamIpText(),
+        String(F("RSSI: ")) + rssiText,
+        upstreamConnected() ? String(F("Home Wi-Fi: connected"))
+                            : String(F("Home Wi-Fi: offline")),
+        F("BOOT long press: setup mode"),
+    };
+    setUiContent(F("Home Wi-Fi"),
+                 upstreamConnected() ? kUiGreenColor : kUiOrangeColor,
+                 lines,
+                 setupMode ? "REBOOT" : (guestAccessActive ? "STOP" : "START"),
+                 setupMode ? kUiOrangeColor : (guestAccessActive ? kUiRedColor : kUiGreenColor));
 }
 
 void drawGuest() {
-    drawHeader(F("Guest access"), guestAccessActive ? TFT_GREEN : TFT_RED);
-    display.setTextFont(2);
-    display.setTextColor(TFT_WHITE, TFT_BLACK);
-    display.drawString(String(F("Portal: ")) + WiFi.softAPIP().toString(), 10, 42);
-    display.drawString(String(F("Code: ")) + settings.guestCode, 10, 66);
-    display.drawString(String(F("Duration: ")) + settings.sessionMinutes + F(" min"), 10, 90);
-    display.setTextColor(naptEnabled ? TFT_GREEN : TFT_YELLOW, TFT_BLACK);
-    display.drawString(String(F("Gateway: ")) + gatewayModeText(), 10, 116);
-    drawFooter();
+    const String lines[kUiLineCount] = {
+        String(F("Portal: ")) + WiFi.softAPIP().toString(),
+        String(F("Code: ")) + settings.guestCode,
+        String(F("Duration: ")) + settings.sessionMinutes + F(" min"),
+        String(F("Gateway: ")) + gatewayModeText(),
+        String(F("Remaining: ")) +
+            (guestAccessActive ? formatDuration(remainingAccessSeconds()) : String(F("-"))),
+    };
+    setUiContent(F("Guest access"),
+                 guestAccessActive ? kUiGreenColor : kUiRedColor,
+                 lines,
+                 setupMode ? "REBOOT" : (guestAccessActive ? "STOP" : "START"),
+                 setupMode ? kUiOrangeColor : (guestAccessActive ? kUiRedColor : kUiGreenColor));
 }
 
 void drawSetupHelp() {
-    drawHeader(F("Setup"), TFT_ORANGE);
-    display.setTextFont(2);
-    display.setTextColor(TFT_WHITE, TFT_BLACK);
-    display.drawString(F("1. Join Wi-Fi:"), 10, 40);
-    display.drawString(kSetupApSsid, 24, 61);
-    display.drawString(F("2. Open:"), 10, 86);
-    display.drawString(WiFi.softAPIP().toString(), 24, 107);
-    display.setTextColor(TFT_CYAN, TFT_BLACK);
-    display.drawString(F("Save, then reboot normally"), 10, 132);
-    drawFooter();
+    const String lines[kUiLineCount] = {
+        F("1. Join Wi-Fi:"),
+        kSetupApSsid,
+        F("2. Open:"),
+        WiFi.softAPIP().toString(),
+        F("Save settings, then reboot"),
+    };
+    setUiContent(F("Owner setup"),
+                 kUiOrangeColor,
+                 lines,
+                 setupMode ? "REBOOT" : (guestAccessActive ? "STOP" : "START"),
+                 setupMode ? kUiOrangeColor : (guestAccessActive ? kUiRedColor : kUiGreenColor));
 }
 
 void drawStatus() {
@@ -838,10 +959,17 @@ void handleActionButtonShortPress() {
 
 void handleActionButtonLongPress() {
     preferences.putBool("setup_next", true);
-    display.fillScreen(TFT_BLACK);
-    display.setTextFont(2);
-    display.setTextColor(TFT_ORANGE, TFT_BLACK);
-    display.drawString(F("Restarting into setup..."), 18, 70);
+    if (displayReady) {
+        const String lines[kUiLineCount] = {
+            F("Restarting into owner setup"),
+            F("Join setup Wi-Fi after reboot"),
+            kSetupApSsid,
+            F("Open http://192.168.42.1/"),
+            F(""),
+        };
+        setUiContent(F("Setup restart"), kUiOrangeColor, lines, "WAIT", kUiOrangeColor);
+        lv_timer_handler();
+    }
     delay(500);
     ESP.restart();
 }
@@ -883,17 +1011,13 @@ void updateButton(ButtonState& button,
 }
 
 void setup() {
-    configureBoardPowerPath();
-
     Serial.begin(115200);
     delay(200);
 
     pinMode(kButtonPagePin, INPUT_PULLUP);
-    pinMode(kButtonActionPin, INPUT_PULLUP);
 
     loadSettings();
-    setupMode = readAndClearSetupNextFlag() || !upstreamConfigured() ||
-                digitalRead(kButtonActionPin) == LOW;
+    setupMode = readAndClearSetupNextFlag() || !upstreamConfigured();
 
     configureDisplay();
     startNetworks();
@@ -911,10 +1035,13 @@ void loop() {
     expireGuestAccessIfNeeded();
     setGatewayOpen(!setupMode && guestAccessActive);
     maybeReconnectUpstream(now);
-    updateButton(pageButton, kButtonPagePin, handlePageButtonShortPress, nullptr);
-    updateButton(actionButton,
-                 kButtonActionPin,
-                 handleActionButtonShortPress,
-                 handleActionButtonLongPress);
+    updateButton(pageButton,
+                 kButtonPagePin,
+                 handlePageButtonShortPress,
+                 setupMode ? nullptr : handleActionButtonLongPress);
     maybeRefreshDisplay(now);
+    if (displayReady) {
+        lv_timer_handler();
+    }
+    delay(5);
 }
