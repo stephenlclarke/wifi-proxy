@@ -112,6 +112,38 @@ Controls:
 - Touch `START` or `STOP` starts or stops guest access in guest mode.
 - Touch `REBOOT` restarts the board from setup mode.
 
+## macOS UI Simulator
+
+The repo includes a native LVGL simulator under `sim/` for iterating the LilyGo
+screen UI without flashing the board. It uses LVGL 8.4.0 and SDL2, matching the
+firmware's LVGL version.
+
+The simulator expects these macOS tools:
+
+```sh
+brew install cmake pkg-config sdl2
+```
+
+Build and run the simulator:
+
+```sh
+make sim
+```
+
+Run a headless smoke test:
+
+```sh
+make sim-check
+```
+
+Simulator controls:
+
+- Click `PAGE` or press `Tab` to cycle display pages.
+- Click `START`/`STOP` or press `Space` to toggle guest access.
+- Press `s` to toggle setup mode.
+- Press `u` to toggle upstream connectivity.
+- Press `q` or `Esc` to quit.
+
 ## Optional Compile-Time Defaults
 
 The normal setup path is the owner setup portal. For development only, you can
@@ -163,6 +195,18 @@ Open the serial monitor:
 
 ```sh
 make monitor
+```
+
+Run the macOS LVGL UI simulator:
+
+```sh
+make sim
+```
+
+Smoke-test the simulator without opening a visible window:
+
+```sh
+make sim-check
 ```
 
 Open the project in VS Code:

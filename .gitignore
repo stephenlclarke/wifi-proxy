@@ -1,4 +1,5 @@
 .pio
+build/
 backups/
 include/network_config.h
 sdkconfig.*

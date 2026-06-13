@@ -672,7 +672,7 @@ void stylePanel(lv_obj_t* obj, uint32_t color) {
 lv_obj_t* makeFooterButton(lv_obj_t* parent, const char* text, lv_align_t align) {
     lv_obj_t* button = lv_btn_create(parent);
     lv_obj_set_size(button, 112, 34);
-    lv_obj_align(button, align, 8, 0);
+    lv_obj_align(button, align, align == LV_ALIGN_RIGHT_MID ? -8 : 8, 0);
     lv_obj_set_style_radius(button, 5, LV_PART_MAIN);
     lv_obj_set_style_bg_color(button, lv_color_hex(0x2f80ed), LV_PART_MAIN);
 
