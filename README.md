@@ -160,7 +160,12 @@ This project uses the PlatformIO board ID `lilygo-t-display-s3`. The starter
 firmware initializes the onboard ST7789 display and enables the LilyGo power
 path needed for battery-powered display operation.
 
-The T-Display-S3 charging circuit is hardware-managed when USB power and a LiPo
-battery are connected. LilyGo's board notes also call out GPIO15: in battery
-power mode, GPIO15 must be driven HIGH to enable the V3V/display power path.
-This firmware sets GPIO15 HIGH during startup before initializing the display.
+The T-Display-S3 charging circuit is hardware-managed when USB-C power and a
+compatible single-cell LiPo battery are connected. LilyGo's board notes also
+call out GPIO15: in battery power mode, GPIO15 must be driven HIGH to enable the
+V3V/display power path. This firmware sets GPIO15 HIGH as the first board
+initialization step in `setup()` and does not repurpose or drive GPIO15 LOW.
+
+The firmware does not adjust charge current or implement battery protection in
+software. Use a battery that is compatible with the board's onboard charging
+circuit, correct connector, and polarity.

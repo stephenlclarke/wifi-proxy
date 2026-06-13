@@ -258,6 +258,13 @@ bool readAndClearSetupNextFlag() {
     return setupNext;
 }
 
+void configureBoardPowerPath() {
+    // LilyGo T-Display-S3 uses GPIO15 to keep the V3V/display power path enabled
+    // in battery mode. Keep this first in setup and never repurpose GPIO15.
+    pinMode(kBoardPowerEnablePin, OUTPUT);
+    digitalWrite(kBoardPowerEnablePin, HIGH);
+}
+
 void setGatewayOpen(bool open) {
 #if MOBILE_BLOCKER_NAPT_AVAILABLE
     if (open && upstreamConnected() && !naptEnabled) {
@@ -567,9 +574,6 @@ void configureWebServer() {
 }
 
 void configureDisplay() {
-    pinMode(kBoardPowerEnablePin, OUTPUT);
-    digitalWrite(kBoardPowerEnablePin, HIGH);
-
     pinMode(TFT_BL, OUTPUT);
     digitalWrite(TFT_BL, TFT_BACKLIGHT_ON);
 
@@ -819,6 +823,8 @@ void updateButton(ButtonState& button,
 }
 
 void setup() {
+    configureBoardPowerPath();
+
     Serial.begin(115200);
     delay(200);
 
