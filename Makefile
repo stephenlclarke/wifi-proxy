@@ -16,4 +16,4 @@ monitor:
 	$(PIO) device monitor --port "$(PORT)" --baud 115200
 
 open:
-	code /Users/sclarke/github/mobil-blocker
+	code /Users/sclarke/github/wifi-proxy

@@ -15,12 +15,12 @@
 
 #if defined(CONFIG_LWIP_IP_FORWARD) && CONFIG_LWIP_IP_FORWARD && \
     defined(CONFIG_LWIP_IPV4_NAPT) && CONFIG_LWIP_IPV4_NAPT
-#define MOBILE_BLOCKER_NAPT_AVAILABLE 1
+#define WIFI_PROXY_NAPT_AVAILABLE 1
 extern "C" {
 #include "lwip/lwip_napt.h"
 }
 #else
-#define MOBILE_BLOCKER_NAPT_AVAILABLE 0
+#define WIFI_PROXY_NAPT_AVAILABLE 0
 #endif
 
 #ifndef WIFI_UPSTREAM_SSID
@@ -199,7 +199,7 @@ String gatewayModeText() {
         return F("setup mode");
     }
 
-#if MOBILE_BLOCKER_NAPT_AVAILABLE
+#if WIFI_PROXY_NAPT_AVAILABLE
     if (!guestAccessActive) {
         return F("closed");
     }
@@ -266,7 +266,7 @@ void configureBoardPowerPath() {
 }
 
 void setGatewayOpen(bool open) {
-#if MOBILE_BLOCKER_NAPT_AVAILABLE
+#if WIFI_PROXY_NAPT_AVAILABLE
     if (open && upstreamConnected() && !naptEnabled) {
         ip_napt_enable(static_cast<uint32_t>(WiFi.softAPIP()), 1);
         naptEnabled = true;
@@ -607,7 +607,7 @@ void drawDashboard() {
     display.setTextFont(2);
     display.setTextColor(TFT_WHITE, TFT_BLACK);
     display.drawString(String(F("Mode: ")) + (setupMode ? F("SETUP") : F("GUEST")), 10, 38);
-    display.drawString(String(F("AP: ")) + (setupMode ? F("mobile-blocker-setup")
+    display.drawString(String(F("AP: ")) + (setupMode ? F("wifi-proxy-setup")
                                                        : settings.guestApSsid),
                        10,
                        58);
@@ -660,7 +660,7 @@ void drawSetupHelp() {
     display.setTextFont(2);
     display.setTextColor(TFT_WHITE, TFT_BLACK);
     display.drawString(F("1. Join Wi-Fi:"), 10, 40);
-    display.drawString(F("mobile-blocker-setup"), 24, 61);
+    display.drawString(F("wifi-proxy-setup"), 24, 61);
     display.drawString(F("2. Open:"), 10, 86);
     display.drawString(WiFi.softAPIP().toString(), 24, 107);
     display.setTextColor(TFT_CYAN, TFT_BLACK);
@@ -705,7 +705,7 @@ void startNetworks() {
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAPConfig(kPortalIp, kPortalGateway, kPortalSubnet);
 
-    const String apSsid = setupMode ? String(F("mobile-blocker-setup")) : settings.guestApSsid;
+    const String apSsid = setupMode ? String(F("wifi-proxy-setup")) : settings.guestApSsid;
     const String apPassword = setupMode ? String(F("setup12345")) : settings.guestApPassword;
     const bool apStarted = apPassword.length() >= 8
                                ? WiFi.softAP(apSsid.c_str(), apPassword.c_str())
@@ -840,7 +840,7 @@ void setup() {
     configureWebServer();
     drawStatus();
 
-    Serial.println(F("mobile-blocker guest gateway ready"));
+    Serial.println(F("wifi-proxy guest gateway ready"));
 }
 
 void loop() {

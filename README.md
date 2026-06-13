@@ -1,4 +1,4 @@
-# mobile-blocker
+# wifi-proxy
 
 Firmware for a LilyGo T-Display-S3 ESP32-S3 that acts as a small home guest
 Wi-Fi gateway. The device joins your existing 2.4 GHz home Wi-Fi as a client,
@@ -50,7 +50,7 @@ The firmware has two modes.
 Setup mode starts when no upstream SSID is configured, when GPIO14 is held while
 booting, or after a long press on GPIO14 in guest mode.
 
-1. Join the setup Wi-Fi network `mobile-blocker-setup`.
+1. Join the setup Wi-Fi network `wifi-proxy-setup`.
 1. Use setup password `setup12345`.
 1. Open `http://192.168.42.1/`.
 1. Select a nearby SSID from the scan list, or enter a hidden SSID manually.
@@ -151,7 +151,7 @@ make monitor
 Open the project in VS Code:
 
 ```sh
-code /Users/sclarke/github/mobil-blocker
+code /Users/sclarke/github/wifi-proxy
 ```
 
 ## Board Notes
