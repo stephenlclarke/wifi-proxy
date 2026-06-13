@@ -53,6 +53,8 @@ constexpr uint8_t kButtonActionPin = 14;
 const IPAddress kPortalIp(192, 168, 42, 1);
 const IPAddress kPortalGateway(192, 168, 42, 1);
 const IPAddress kPortalSubnet(255, 255, 255, 0);
+const char kSetupApSsid[] = "wifi-proxy-setup";
+const char kSetupApPassword[] = "setup12345";
 
 struct GatewaySettings {
     String upstreamSsid;
@@ -311,15 +313,18 @@ String statusJson() {
     body += WiFi.softAPIP().toString();
     body += F("\",\"clients\":");
     body += WiFi.softAPgetStationNum();
-    body += F(",\"upstreamConfigured\":");
-    body += upstreamConfigured() ? F("true") : F("false");
     body += F(",\"upstreamConnected\":");
     body += upstreamConnected() ? F("true") : F("false");
-    body += F(",\"upstreamSsid\":\"");
-    body += jsonEscape(settings.upstreamSsid);
-    body += F("\",\"upstreamIp\":\"");
-    body += jsonEscape(upstreamIpText());
-    body += F("\",\"guestAccessActive\":");
+    if (setupMode) {
+        body += F(",\"upstreamConfigured\":");
+        body += upstreamConfigured() ? F("true") : F("false");
+        body += F(",\"upstreamSsid\":\"");
+        body += jsonEscape(settings.upstreamSsid);
+        body += F("\",\"upstreamIp\":\"");
+        body += jsonEscape(upstreamIpText());
+        body += F("\"");
+    }
+    body += F(",\"guestAccessActive\":");
     body += guestAccessActive ? F("true") : F("false");
     body += F(",\"remainingSeconds\":");
     body += remainingAccessSeconds();
@@ -481,14 +486,66 @@ String guestHtml() {
     return pageShell(settings.guestApSsid, body);
 }
 
-void sendPortal() {
+void sendSetupPortal() {
     webServer.sendHeader(F("Cache-Control"), F("no-store"));
-    webServer.send(200, F("text/html"), setupMode ? setupHtml() : guestHtml());
+    webServer.send(200, F("text/html"), setupHtml());
+}
+
+void sendGuestPortal() {
+    webServer.sendHeader(F("Cache-Control"), F("no-store"));
+    webServer.send(200, F("text/html"), guestHtml());
+}
+
+void sendPortal() {
+    if (setupMode) {
+        sendSetupPortal();
+        return;
+    }
+
+    sendGuestPortal();
+}
+
+void sendOwnerOnly() {
+    String body;
+    body.reserve(900);
+    body += F("<h1>Owner setup locked</h1>"
+              "<section class=\"panel\"><p>Home Wi-Fi configuration is not available "
+              "from the guest network.</p>"
+              "<p>Restart the LilyGo into setup mode to change the upstream home Wi-Fi "
+              "connection or guest settings.</p>"
+              "<p class=\"small\">Hold GPIO14 while booting, or long-press GPIO14 in "
+              "guest mode. The setup network and URL are shown on the LilyGo display.</p>"
+              "</section>");
+    webServer.sendHeader(F("Cache-Control"), F("no-store"));
+    webServer.send(403, F("text/html"), pageShell(F("Owner setup locked"), body));
+}
+
+void handleAdminGet() {
+    if (!setupMode) {
+        sendOwnerOnly();
+        return;
+    }
+
+    sendSetupPortal();
+}
+
+bool isOwnerSetupRoute(const String& uri) {
+    return uri == F("/admin") || uri.startsWith(F("/admin/")) || uri == F("/config") ||
+           uri.startsWith(F("/config/")) || uri == F("/setup") || uri.startsWith(F("/setup/"));
+}
+
+void handleNotFound() {
+    if (!setupMode && isOwnerSetupRoute(webServer.uri())) {
+        sendOwnerOnly();
+        return;
+    }
+
+    sendPortal();
 }
 
 void handleAdminSave() {
     if (!setupMode) {
-        webServer.send(403, F("text/plain"), F("Admin setup is locked. Reboot into setup mode."));
+        sendOwnerOnly();
         return;
     }
 
@@ -525,7 +582,7 @@ void handleAdminSave() {
 
 void handleGuestLogin() {
     if (setupMode) {
-        sendPortal();
+        webServer.send(404, F("text/plain"), F("Guest portal is not active in setup mode."));
         return;
     }
 
@@ -542,7 +599,7 @@ void handleGuestLogin() {
 
 void handleAdminReboot() {
     if (!setupMode) {
-        webServer.send(403, F("text/plain"), F("Admin setup is locked."));
+        sendOwnerOnly();
         return;
     }
 
@@ -553,7 +610,10 @@ void handleAdminReboot() {
 
 void configureWebServer() {
     webServer.on(F("/"), HTTP_GET, sendPortal);
-    webServer.on(F("/admin"), HTTP_GET, sendPortal);
+    webServer.on(F("/admin"), HTTP_GET, handleAdminGet);
+    webServer.on(F("/admin/wifi"), HTTP_GET, handleAdminGet);
+    webServer.on(F("/config"), HTTP_GET, handleAdminGet);
+    webServer.on(F("/setup"), HTTP_GET, handleAdminGet);
     webServer.on(F("/admin/save"), HTTP_POST, handleAdminSave);
     webServer.on(F("/admin/reboot"), HTTP_POST, handleAdminReboot);
     webServer.on(F("/guest/login"), HTTP_POST, handleGuestLogin);
@@ -569,7 +629,7 @@ void configureWebServer() {
     webServer.on(F("/connecttest.txt"), HTTP_GET, sendPortal);
     webServer.on(F("/ncsi.txt"), HTTP_GET, sendPortal);
     webServer.on(F("/canonical.html"), HTTP_GET, sendPortal);
-    webServer.onNotFound(sendPortal);
+    webServer.onNotFound(handleNotFound);
     webServer.begin();
 }
 
@@ -607,7 +667,7 @@ void drawDashboard() {
     display.setTextFont(2);
     display.setTextColor(TFT_WHITE, TFT_BLACK);
     display.drawString(String(F("Mode: ")) + (setupMode ? F("SETUP") : F("GUEST")), 10, 38);
-    display.drawString(String(F("AP: ")) + (setupMode ? F("wifi-proxy-setup")
+    display.drawString(String(F("AP: ")) + (setupMode ? String(kSetupApSsid)
                                                        : settings.guestApSsid),
                        10,
                        58);
@@ -660,7 +720,7 @@ void drawSetupHelp() {
     display.setTextFont(2);
     display.setTextColor(TFT_WHITE, TFT_BLACK);
     display.drawString(F("1. Join Wi-Fi:"), 10, 40);
-    display.drawString(F("wifi-proxy-setup"), 24, 61);
+    display.drawString(kSetupApSsid, 24, 61);
     display.drawString(F("2. Open:"), 10, 86);
     display.drawString(WiFi.softAPIP().toString(), 24, 107);
     display.setTextColor(TFT_CYAN, TFT_BLACK);
@@ -705,8 +765,8 @@ void startNetworks() {
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAPConfig(kPortalIp, kPortalGateway, kPortalSubnet);
 
-    const String apSsid = setupMode ? String(F("wifi-proxy-setup")) : settings.guestApSsid;
-    const String apPassword = setupMode ? String(F("setup12345")) : settings.guestApPassword;
+    const String apSsid = setupMode ? String(kSetupApSsid) : settings.guestApSsid;
+    const String apPassword = setupMode ? String(kSetupApPassword) : settings.guestApPassword;
     const bool apStarted = apPassword.length() >= 8
                                ? WiFi.softAP(apSsid.c_str(), apPassword.c_str())
                                : WiFi.softAP(apSsid.c_str());

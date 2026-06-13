@@ -50,9 +50,15 @@ The firmware has two modes.
 Setup mode starts when no upstream SSID is configured, when GPIO14 is held while
 booting, or after a long press on GPIO14 in guest mode.
 
+Owner setup mode is separate from guest mode. It publishes only the setup AP,
+not the configured guest AP, and serves the home Wi-Fi configuration page from
+that setup network.
+
 1. Join the setup Wi-Fi network `wifi-proxy-setup`.
 1. Use setup password `setup12345`.
 1. Open `http://192.168.42.1/`.
+1. Use `/admin`, `/admin/wifi`, `/config`, or `/setup` for the owner
+   configuration page.
 1. Select a nearby SSID from the scan list, or enter a hidden SSID manually.
 1. Enter the home Wi-Fi password.
 1. Set the guest SSID, guest AP password, portal access code, and access
@@ -75,9 +81,14 @@ Current guest behavior:
 - Android, Apple, Windows, and Firefox captive-network probe handling
 - Timed access using the configured guest portal code
 - Global access window for the guest AP
-- JSON status at `http://192.168.42.1/status`
+- Guest-safe JSON status at `http://192.168.42.1/status`
 - On-device status pages for gateway, upstream Wi-Fi, guest access, and setup
   help
+
+Owner configuration routes are locked in guest mode. Guest clients that request
+`/admin`, `/admin/...`, `/config`, `/config/...`, `/setup`, or `/setup/...`
+receive a 403 page instead of the home Wi-Fi configuration form. Guest-mode
+status JSON also omits the upstream SSID and upstream IP address.
 
 The timer is currently global for the guest AP, not per-client. If one guest
 starts a session, all clients on the guest AP can use the connection until the
